@@ -8,101 +8,130 @@ using System.Threading.Tasks;
 
 namespace OS_SocketTCP_Server
 {
+    // -------------------------------------
+    // https://metanit.com/sharp/net/4.4.php
+    // -------------------------------------
+
     public class ClientObject
     {
-        public Dictionary<string, Task<byte[]>> tasks;
+        protected internal string Id { get; private set; }
+        protected internal NetworkStream Stream { get; private set; }
 
-        public TcpClient client;
-        public int id;
+        // Для идентификации клиента с помощью инкремента
+        // ----------------------------------------------
+        int IDClient;
 
-        public ClientObject(TcpClient _client, Dictionary<string, Task<byte[]>> _tasks, int _id)
+        TcpClient client;
+        ServerObject server;
+
+        public ClientObject(TcpClient tcpClient, ServerObject serverObject, int clientID)
         {
-            client = _client;
-            tasks = _tasks;
-            id = _id;
-
-            Console.WriteLine($"Клиент {id}");
+            Id = Guid.NewGuid().ToString();
+            client = tcpClient;
+            server = serverObject;
+            serverObject.AddConnection(this);
+            IDClient = clientID;
         }
+
+        public List<Task> tasks = new List<Task>();
 
         public void Process()
         {
-            Task<byte[]> taskDefault = null;
-            NetworkStream stream = null;
-
             try
             {
-                stream = client.GetStream();
-                byte[] data = new byte[64];
+                Stream = client.GetStream();
+
+                Console.WriteLine($"Клиент {IDClient} подключился к серверу");
+
+                SayHello();
+
+                string message;
 
                 while (true)
                 {
-                    StringBuilder builder = new StringBuilder();
-                    int bytes = 0;
-                    do
+                    try
                     {
-                        bytes = stream.Read(data, 0, data.Length);
-                        builder.Append(Encoding.Unicode.GetString(data, 0, bytes));
+                        message = GetMessage();
+
+                        Console.WriteLine($"[{ DateTime.Now.ToLongTimeString()}] | Клиент {IDClient}: {message}");
+
+                        // Возникли трудности с реализацией последовательного выполнения задач, согласно варианту (ожидание).
+                        // ---------------------------------------------------------------------------------------------------
+                        // tasks.Add(Task.Factory.StartNew(() => Test(message)).ContinueWith(Task => tasks[tasks.Count - 2]));
+                        // tasks[tasks.Count - 1].Wait();
+
+                        // Следующая строка добавляет задачи в список и сразу же выполняет их параллельно (в течение 6 секунд после добавления)
+                        // ------------------------------------------------------------------------------
+                        tasks.Add(Task.Factory.StartNew(() => Test(message)));
+
                     }
-                    while (stream.DataAvailable);
-
-                    string message = builder.ToString();
-
-                    Console.WriteLine($"[{DateTime.Now.ToLongTimeString()}] | Клиент {id}: {message}");
-
-                    if (tasks.ContainsKey(message))
+                    catch
                     {
-                        taskDefault = tasks[message];
+                        Console.WriteLine($"[{ DateTime.Now.ToLongTimeString()}] | Клиент {IDClient} прервал соединение");
+                        break;
                     }
-                    else
-                    {
-                        if (taskDefault != null)
-                        {
-                            if (!taskDefault.IsCompleted)
-                            {
-                                Sending(Encoding.Unicode.GetBytes("Сервер занят"), stream);
-                                continue;
-                            }
-                        }
-                        tasks.Add(message, Task.Factory.StartNew(() => Processing(message)));
-                        taskDefault = tasks[message];
-                    }
-
-                    taskDefault.ContinueWith(Task => {
-                        var result = taskDefault.Result;
-                        Sending(result, stream);
-                    });
                 }
             }
-
-            catch (Exception ex)
+            catch (Exception e)
             {
-                Console.WriteLine(ex.Message);
+                Console.WriteLine(e.Message);
             }
-
             finally
             {
-                if (stream != null)
-                    stream.Close();
-                if (client != null)
-                    client.Close();
+                server.RemoveConnection(this.Id);
+                Close();
             }
         }
 
-        public byte[] Processing(string message)
+        private string GetMessage()
         {
-            // Вставка значения в заданную исполнителем строку
-            string line = $"Получено число: {message}";
+            byte[] data = new byte[64];
+            StringBuilder builder = new StringBuilder();
+            int bytes = 0;
+            do
+            {
+                bytes = Stream.Read(data, 0, data.Length);
+                builder.Append(Encoding.Unicode.GetString(data, 0, bytes));
+            }
+            while (Stream.DataAvailable);
 
-            // (Т1) Время обработки
-            Thread.Sleep(6000);
-
-            tasks.Remove(message);
-
-            return Encoding.Unicode.GetBytes(line);
+            return builder.ToString();
         }
 
-        public void Sending(byte[] data, NetworkStream Stream)
+        protected internal void Close()
         {
+            if (Stream != null)
+                Stream.Close();
+            if (client != null)
+                client.Close();
+        }
+
+        public void Test(string message)
+        {
+            // (T1) Время обработки запроса: 6 секунд
+            Thread.Sleep(6000);
+
+            try
+            {
+                // Обработка: Вставка значения в заданную исполнителем строку
+                string line = $"[{ DateTime.Now.ToLongTimeString()}] | СЕРВЕР: получено значение {message}";
+
+                byte[] data = Encoding.Unicode.GetBytes(line);
+
+                Stream.Write(data, 0, data.Length);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.Message);
+            }
+        }
+
+        public void SayHello()
+        {
+            string line = $"СОЕДИНЕНИЕ УСТАНОВЛЕНО. ВЫ КЛИЕНТ #{IDClient}";
+
+            byte[] data = Encoding.Unicode.GetBytes(line);
+
             Stream.Write(data, 0, data.Length);
         }
     }
