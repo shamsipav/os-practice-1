@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -33,10 +34,34 @@ namespace OS_SocketTCP_Server
             IDClient = clientID;
         }
 
-        public List<Task> tasks = new List<Task>();
+        public ConcurrentQueue<Task<string>> tasks = new ConcurrentQueue<Task<string>>();
+
+        public static bool isTaskRun = false;
+
+        public void RunTasks()
+        {
+            if (tasks.Count > 0)
+            {
+                while (tasks.Count > 0)
+                {
+                    tasks.TryDequeue(out Task<string> result);
+
+                    result.Start();
+                    isTaskRun = true;
+                    Console.WriteLine(isTaskRun);
+                    result.Wait();
+                    isTaskRun = false;
+                    Console.WriteLine(isTaskRun);
+                }
+            }
+        }
 
         public void Process()
         {
+            //Task<string> taskDefault = null;
+
+            bool isThreadStart = false;
+
             try
             {
                 Stream = client.GetStream();
@@ -55,15 +80,24 @@ namespace OS_SocketTCP_Server
 
                         Console.WriteLine($"[{ DateTime.Now.ToLongTimeString()}] | Клиент {IDClient}: {message}");
 
-                        // Возникли трудности с реализацией последовательного выполнения задач, согласно варианту (ожидание).
-                        // ---------------------------------------------------------------------------------------------------
-                        // tasks.Add(Task.Factory.StartNew(() => Test(message)).ContinueWith(Task => tasks[tasks.Count - 2]));
-                        // tasks[tasks.Count - 1].Wait();
+                        if (isThreadStart == false)
+                        {
+                            Thread myThread = new Thread(new ThreadStart(RunTasks));
+                            myThread.Start();
 
-                        // Следующая строка добавляет задачи в список и сразу же выполняет их параллельно (в течение 6 секунд после добавления)
-                        // ------------------------------------------------------------------------------
-                        tasks.Add(Task.Factory.StartNew(() => Test(message)));
+                            isThreadStart = true;
+                        }
 
+                        //if (isTaskRun == true)
+                        //{
+                        //    continue;
+                        //}
+
+                        tasks.Enqueue(new Task<string>(() => GetValue(message)));
+
+                        //taskDefault.ContinueWith(Task => {
+                        //    var result = Task.Result;
+                        //});
                     }
                     catch
                     {
@@ -82,6 +116,7 @@ namespace OS_SocketTCP_Server
                 Close();
             }
         }
+
 
         private string GetMessage()
         {
@@ -106,7 +141,7 @@ namespace OS_SocketTCP_Server
                 client.Close();
         }
 
-        public void Test(string message)
+        public string GetValue(string message)
         {
             // (T1) Время обработки запроса: 6 секунд
             Thread.Sleep(6000);
@@ -124,6 +159,8 @@ namespace OS_SocketTCP_Server
             {
                 Console.WriteLine(e.Message);
             }
+
+            return message;
         }
 
         public void SayHello()
